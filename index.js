@@ -39,6 +39,15 @@ function handle_err(err, res) {
   }
 }
 
+function decode_story_filter(block) {
+  if ('star' in block && 'story' in block.star) {
+    let story = block.star.story;
+    const buf = Buffer.from(story, 'hex');
+    block.star.storyDecoded = buf.toString('ascii');
+  }
+  return block;
+}
+
 // **************************************************************
 // Get Block
 //
@@ -49,7 +58,8 @@ function handle_err(err, res) {
 async function get_block(req, res) {
   let blockheight = req.params.blockheight;
   debug('saw request for block at height: ' + blockheight);
-  await blockchain.getBlock(blockheight).then((block) => res.send(block))
+  await blockchain.getBlock(blockheight).then((block) =>
+    res.send(decode_story_filter(block)))
     .catch((err) => handle_err(err, res));
 }
 
@@ -66,6 +76,7 @@ async function get_blocks_by_address(req, res) {
   for (var i=0; done==false; i++) {
     await blockchain.getBlock(i)
     .then((block) => {
+      block = decode_story_filter(block);
       console.log(block);
       if (block.address === address) {
         retval.push(block);
@@ -101,6 +112,7 @@ async function get_block_by_hash(req, res) {
     .then((block) => {
       console.log(block);
       if (block.hash === hash) {
+        block = decode_story_filter(block);
         debug('saw matching hash, sending block');
         res.status(200).send(block);
         done = true;
@@ -150,18 +162,35 @@ async function get_block_by_hash(req, res) {
 async function post_block(req, res) {
   debug('saw post of new block: ' + req.body);
   let block = req.body;
-  if (!'address'  in block) {
+  if (!'address'  in block || !block.address) {
     res.status(400).send('address is a required field');
   }
   if (!'star'  in block) {
     res.status(400).send('star is a required field');
   }
-  if (!'ra'  in block.star) {
+  if (!'ra'  in block.star || !block.star.ra) {
     res.status(400).send('ra is missing in star');
   }
-  if (!'dec'  in block.star) {
+  if (!'dec'  in block.star || !block.star.dec) {
     res.status(400).send('dec is missing in star');
   }
+  // now my review said the story is actually required
+  // this was not clear from the project
+  if (!'story' in block.star || !block.star.story) {
+    res.status(400).send('story is missing in star');
+  }
+
+  // default story is '' - and re-encode it as hex before
+  // proceeding per my first code review feedback
+  // project requirements were vague!
+  let story = '';
+  if ('story' in block.star) {
+    story = block.star.story;
+  }
+  const buf = Buffer.from(story, 'ascii');
+  let story_encoded = buf.toString('hex');
+  block.star.story = story_encoded;
+
   let pendingRequest = pendingRequests[block.address];
   if (pendingRequest == undefined) {
     res.status(401).send('No pending request for address ' + block.address);
@@ -198,6 +227,22 @@ async function post_block(req, res) {
 // *************************************************************
 async function request_validation(req, res) {
   debug('saw request validation: ' + req.body);
+  let address = req.body.address;
+
+  // according to my first review, it is required that I re-use
+  // an existing handshake if we are already in a session.
+  // This was not clear from the project notes and seems
+  // counter-intuitive.
+  if (address in pendingRequests) {
+    let validationData = pendingRequests[address];
+    let timestamp = new Date().getTime().toString().slice(0,-3);
+    if (timestamp < parseInt(validationData.requestTimestamp) + 300) {
+      validationData.validationWindow = 300 - (timestamp - parseInt(validationData.requestTimestamp));
+      res.send(validationData);
+      return;
+    }
+  }
+  // not found or expired, make a new one
   let validationData = req.body;
   validationData.requestTimestamp = new Date().getTime().toString().slice(0,-3);
   validationData.validationWindow = 300;
@@ -237,8 +282,8 @@ async function message_signature_validate(req, res) {
       retval.registerStar = true;
       retval.status = signatureData;
       let currentTime = new Date().getTime().toString().slice(0,-3);
-      if ((currentTime - pendingRequest.requestTimestamp)
-          > pendingRequest.requestTimestamp) {
+      if ((currentTime - 300)
+          > parseInt(pendingRequest.requestTimestamp)) {
             res.status(401).send('Time window expired');
       }
       debug('pending request timestamp: ' + pendingRequest.requestTimestamp);

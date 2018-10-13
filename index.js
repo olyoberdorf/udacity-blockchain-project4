@@ -135,6 +135,15 @@ async function get_block_by_hash(req, res) {
   }
 }
 
+// *************************************************************
+// Check if value is valid ascii
+//
+// see https://stackoverflow.com/questions/14313183/javascript-regex-how-do-i-check-if-the-string-is-ascii-only
+// *************************************************************
+function _isASCII(str) {
+  return /^[\x00-\x7F]*$/.test(str);
+}
+
 
 // *************************************************************
 // Save a block to the end of the chain.
@@ -187,7 +196,15 @@ async function post_block(req, res) {
   if ('story' in block.star) {
     story = block.star.story;
   }
-  const buf = Buffer.from(story, 'ascii');
+  if (!_isASCII(story)) {
+    res.status(400).send('story must be valid ASCII');
+    return;
+  }
+  if (story.length > 500) {
+    res.status(400).send('story must be under 500 characers');
+    return;
+  }
+  let buf = Buffer.from(story, 'ascii');
   let story_encoded = buf.toString('hex');
   block.star.story = story_encoded;
 

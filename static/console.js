@@ -63,7 +63,6 @@ $('#validateButton').click(function() {
     success: function(data) {
       console.log(data);
       $('#validateResults').html(JSON.stringify(data));
-      loadblock();
     },
     error: function(data) {
       console.log(data.responseText);
